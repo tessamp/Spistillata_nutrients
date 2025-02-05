@@ -1,0 +1,133 @@
+# RNA-seq differential expression analysis of S. pistillata host samples following nutrient pulse experiment where nutrient availability (NO3- and PO43-) and stoichiometry were manipulated. 
+
+#####################EdgeR for differenetial expression of genes, starting at DGEList using counts data from celseq pipeline, make sure counts data is clean (aka ERCCs removed and last rows)####################
+
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(RColorBrewer)
+library(NMF)
+library(genefilter)
+
+# Call in data
+x <- read.csv("gene_count_matrix.csv", 
+              header=TRUE, row.names =1, colClasses=c("character", rep("numeric", 32))) #row names are geneid
+
+#remove counts - 4 out of 8 (0.5) samples need to have counts over 10
+
+filt<-filterfun(pOverA(0.5,10))
+#create filter for the counts data
+xfilt <- genefilter(x, filt)
+
+#identify genes to keep by count filter
+xkeep <- x[xfilt,]
+xgenes <- rownames(xkeep)
+
+#gene count data filtered in PoverA, P percent of the samples have counts over A
+xcountsover <- as.data.frame(x[which(rownames(x) %in% xgenes),])
+x<-xcountsover
+write.csv(xcountsover, "Spist_filtered_4-out-of-8-50perc.csv")
+###########make counts into a DGEList for EdgeR
+y <- DGEList(counts=x)
+
+########Bring in samples file, samples file must have column named 'group' in this case make it to correspond to treatment, 1-4
+samples <- read.delim("data_design.csv", sep=",")
+
+y<-DGEList(counts=x, genes=rownames(x), group=samples$group1)
+y$samples
+
+####normalise data, use calcNormFactors (this is a scaling factor for library size) to correct for low or high gene counts that could be skewing the data
+
+y<-calcNormFactors(y)
+write.csv(y, "Spist_filtered_4-out-of-8-50perc_normalised.csv")
+
+y$samples
+
+design<-model.matrix(~0+samples$group1)
+new_col_names<-c("HN.HP","HN.LP","LN.HP","LN.LP")
+colnames(design)<-new_col_names
+
+
+design
+
+y<-estimateDisp(y,design,robust=TRUE)
+y$common.dispersion
+
+plotBCV(y)
+
+###  plots shows variation trend not on par with common... which suggest there are changes in S pistillata
+
+fit<-glmQLFit(y, design, robust=TRUE)  #use robust=TRUE has no effect on downstream analysis but is very useful as it identifies genes that are outliers from the mean-NB dispersion trend
+head(fit$coefficients)
+
+#################DIFFERNETIAL EXPRESSION##########################3
+###test for sig differential expression in each gene use QL F-Test
+con1<-makeContrasts(HN.HP - HN.LP,levels=design)
+qlf1<-glmQLFTest(fit,contrast=con1)
+topTags(qlf1)
+
+
+###repeat for all treatments
+con2<-makeContrasts(HN.HP - LN.HP,levels=design)
+qlf2<-glmQLFTest(fit,contrast=con2)
+topTags(qlf2)
+summary(decideTests(qlf2))
+
+
+con3<-makeContrasts(HN.HP - LN.LP,levels=design)
+qlf3<-glmQLFTest(fit,contrast=con3)
+topTags(qlf3)
+summary(decideTests(qlf3))
+
+plotMD(qlf3)
+tr3<-glmTreat(fit,contrast=con3,lfc=log2(1.2))
+topTags(tr3)
+
+
+con5<-makeContrasts(HN.LP - LN.HP,levels=design)
+qlf5<-glmQLFTest(fit,contrast=con5)
+topTags(qlf5)
+summary(decideTests(qlf5))
+
+plotMD(qlf5)
+
+con6<-makeContrasts(HN.LP - LN.LP,levels=design)
+qlf6<-glmQLFTest(fit,contrast=con6)
+topTags(qlf6)
+summary(decideTests(qlf6))
+
+conall<-makeContrasts(
+  HN.HPvsHN.LP=HN.HP-HN.LP,
+  HN.HPvsLN.HP=HN.HP-LN.HP,
+  HN.HPvsLN.LP=HN.HP-LN.LP,
+  HN.LPvsLN.HP=HN.LP-LN.HP,
+  HN.LPvsLN.LP=HN.LP-LN.LP, 
+  LN.HPvsLN.LP=LN.HP-LN.LP,levels=design)
+
+anov<-glmQLFTest(fit,contrast=conall)
+topTags(anov)
+summary(decideTests(anov))
+
+plz<-topTags(anov, n=Inf, adjust.method="BH")
+
+write.csv(plz, file="StyloP_anov_normy_y.csv") 
+
+t05<-read.csv(file.choose()) #read in saved dataframe and remove first columns (below)
+
+row.names(t05) <- t05$genes
+t05 <- t05[,-1]
+t05 <- t05[,-1]
+
+library(pheatmap)
+library(RColorBrewer)
+
+logcpm<-cpm(y,log=TRUE)
+
+###gives sample colours
+my_sample_col<-data.frame(sample = samples$treatment)
+row.names(my_sample_col)<-colnames(logcpm)
+
+sigcond <-rownames(subset(t05,FDR <0.05)) ###uses DEGs with padj of less than 0.05
+pl<-pheatmap((logcpm) [sigcond,], cluster_rows=T, cluster_cols=T,  annotation_col= my_sample_col, show_rownames=T,  scale = "row", col=colorRampPalette(rev(brewer.pal(9,"RdYlBu")))(594), border_color = "NA", breaks = NULL)
+
