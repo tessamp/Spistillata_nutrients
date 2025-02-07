@@ -1,4 +1,5 @@
 # Bioinformatic analyses were conducted on the University of Southampton’s High Performance Computer Cluster “Iridis”. 
+### FastQ files have been deposited on NCBI at BioProject PRJNA1156634.
 
 ## Tools used
 
